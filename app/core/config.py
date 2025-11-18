@@ -1,5 +1,6 @@
 """配置管理器"""
 
+import os
 import toml
 from pathlib import Path
 from typing import Dict, Any
@@ -22,24 +23,74 @@ class ConfigManager:
         self._storage = storage
 
     def load(self, section: str) -> Dict[str, Any]:
-        """配置加载器"""
+        """配置加载器 - 优先从环境变量读取，然后从配置文件读取"""
         try:
-            with open(self.config_path, "r", encoding="utf-8") as f:
-                config = toml.load(f)[section]
+            # 首先尝试从配置文件加载
+            config = {}
+            try:
+                with open(self.config_path, "r", encoding="utf-8") as f:
+                    config = toml.load(f).get(section, {})
+            except FileNotFoundError:
+                print(f"[Setting] 配置文件不存在，使用环境变量和默认值: {self.config_path}")
+            
+            # 环境变量映射表
+            env_mappings = {
+                "global": {
+                    "base_url": "BASE_URL",
+                    "log_level": "LOG_LEVEL",
+                    "image_mode": "IMAGE_MODE",
+                    "admin_password": "ADMIN_PASSWORD",
+                    "admin_username": "ADMIN_USERNAME",
+                    "image_cache_max_size_mb": "IMAGE_CACHE_MAX_SIZE_MB",
+                    "video_cache_max_size_mb": "VIDEO_CACHE_MAX_SIZE_MB",
+                },
+                "grok": {
+                    "api_key": "GROK_API_KEY",
+                    "proxy_url": "PROXY_URL",
+                    "cache_proxy_url": "CACHE_PROXY_URL",
+                    "cf_clearance": "CF_CLEARANCE",
+                    "x_statsig_id": "X_STATSIG_ID",
+                    "filtered_tags": "FILTERED_TAGS",
+                    "stream_chunk_timeout": "STREAM_CHUNK_TIMEOUT",
+                    "stream_total_timeout": "STREAM_TOTAL_TIMEOUT",
+                    "stream_first_response_timeout": "STREAM_FIRST_RESPONSE_TIMEOUT",
+                    "temporary": "TEMPORARY",
+                    "show_thinking": "SHOW_THINKING",
+                }
+            }
+            
+            # 从环境变量覆盖配置
+            if section in env_mappings:
+                for config_key, env_key in env_mappings[section].items():
+                    env_value = os.getenv(env_key)
+                    if env_value is not None:
+                        # 处理布尔值
+                        if config_key in ["temporary", "show_thinking"]:
+                            config[config_key] = env_value.lower() in ("true", "1", "yes", "on")
+                        # 处理数字值
+                        elif config_key in ["stream_chunk_timeout", "stream_total_timeout",
+                                          "stream_first_response_timeout", "image_cache_max_size_mb",
+                                          "video_cache_max_size_mb"]:
+                            try:
+                                config[config_key] = int(env_value)
+                            except ValueError:
+                                print(f"[Setting] 环境变量 {env_key} 的值 '{env_value}' 无法转换为整数，使用默认值")
+                        else:
+                            config[config_key] = env_value
 
-                # 自动将 SOCKS5 转换为 SOCKS5H
-                if section == "grok" and "proxy_url" in config:
-                    proxy_url = config["proxy_url"]
-                    if proxy_url and proxy_url.startswith("socks5://"):
-                        config["proxy_url"] = proxy_url.replace("socks5://", "socks5h://", 1)
+            # 自动将 SOCKS5 转换为 SOCKS5H
+            if section == "grok" and "proxy_url" in config:
+                proxy_url = config["proxy_url"]
+                if proxy_url and proxy_url.startswith("socks5://"):
+                    config["proxy_url"] = proxy_url.replace("socks5://", "socks5h://", 1)
 
-                # 自动为 CF Clearance 添加前缀
-                if section == "grok" and "cf_clearance" in config:
-                    cf_clearance = config["cf_clearance"]
-                    if cf_clearance and not cf_clearance.startswith("cf_clearance="):
-                        config["cf_clearance"] = f"cf_clearance={cf_clearance}"
+            # 自动为 CF Clearance 添加前缀
+            if section == "grok" and "cf_clearance" in config:
+                cf_clearance = config["cf_clearance"]
+                if cf_clearance and not cf_clearance.startswith("cf_clearance="):
+                    config["cf_clearance"] = f"cf_clearance={cf_clearance}"
 
-                return config
+            return config
         except Exception as e:
             raise Exception(f"[Setting] 配置加载失败: {e}")
     
